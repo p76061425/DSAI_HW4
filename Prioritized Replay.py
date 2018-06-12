@@ -2,13 +2,15 @@ import os
 import gym
 import numpy as np
 import random
-from keras.models import Sequential
-from keras.layers import Dense, Dropout
+import keras.backend as K
+from keras.models import Sequential, Model
+from keras.layers import Dense, Dropout, Input
 from keras.optimizers import Adam
 from collections import deque
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import pickle
+
 
 class SumTree(object):
     data_pointer = 0
@@ -109,19 +111,26 @@ class Prioritized_Replay:
         self.epsilon_decay = 0.995
         self.learning_rate = 0.005
         self.tau = .125
+        self.ob_size = self.env.observation_space.shape[0]
         self.model        = self.create_model()
         self.target_model = self.create_model()
 
         
     def create_model(self):
-        model   = Sequential()
-        state_shape  = self.env.observation_space.shape
-        model.add(Dense(24, input_dim=state_shape[0], activation="relu"))
-        model.add(Dense(48, activation="relu"))
-        model.add(Dense(24, activation="relu"))
-        model.add(Dense(self.env.action_space.n))
-        model.compile(loss="mean_squared_error",
-            optimizer=Adam(lr=self.learning_rate)) 
+        def weight_loss_wrapper(isweight):
+            def weight_loss(target, prdict):
+                return K.mean(K.square(target - prdict) * isweight)
+            return weight_loss
+        
+        inputs = Input(shape=(self.ob_size,))
+        weights = Input(shape=(1,))
+        l1   = Dense(24, activation='relu')(inputs)
+        l2   = Dense(48, activation='relu')(l1)
+        l3   = Dense(self.env.action_space.n)(l2)
+        
+        model = Model([inputs, weights], l3)
+        model.compile(loss=weight_loss_wrapper(weights),optimizer=Adam(lr=self.learning_rate)) 
+
         return model
         
     def act(self, state):
@@ -129,7 +138,7 @@ class Prioritized_Replay:
         self.epsilon = max(self.epsilon_min, self.epsilon)
         if np.random.random() < self.epsilon:
             return self.env.action_space.sample()
-        return np.argmax(self.model.predict(state)[0])
+        return np.argmax(self.model.predict( [state,np.ones((1, 1))] )[0])
 
     def remember(self, cur_state0, cur_state1, action,reward, new_state0, new_state1, done):
         self.memory.store([cur_state0, cur_state1, action,reward, new_state0, new_state1, done])
@@ -138,14 +147,14 @@ class Prioritized_Replay:
         tree_idx, batch_memory, ISWeights = self.memory.sample(self.batch_size)
         state = batch_memory[:,:2]
         new_state = batch_memory[:,4:6]
-
-        pridict_Q = self.model.predict(new_state)
+        
+        pridict_Q = self.model.predict(   [new_state,np.ones((self.batch_size, 1))]   )
         max_act = np.empty((self.batch_size))
         for i in range(self.batch_size):
             max_act[i] = np.argmax(pridict_Q[i,:])
         
-        train_targets = self.target_model.predict(state)
-        Q_future = self.target_model.predict(new_state)
+        train_targets = self.target_model.predict( [state,np.ones((self.batch_size, 1))] )
+        Q_future = self.target_model.predict( [new_state,np.ones((self.batch_size, 1))]  )
         targets = np.zeros((self.batch_size))
         abs_errors = np.zeros((self.batch_size))
         
@@ -157,14 +166,8 @@ class Prioritized_Replay:
             targets[idx] = reward + self.gamma*max_Q_future
             train_targets[idx,int(action)] = reward + self.gamma*max_Q_future
         
-        self.model.fit(state, train_targets, epochs=1, verbose=0)
+        self.model.fit( [state,ISWeights]  , train_targets, epochs=1, verbose=0)
         
-        predict_q = self.model.predict(state)
-        for idx,target in enumerate(targets):
-            action = batch_memory[idx,2]
-            abs_errors[idx] = abs( target - predict_q[idx,int(action)] )
-        
-        self.memory.batch_update(tree_idx,abs_errors)
     
     def target_train(self):
         weights = self.model.get_weights()
@@ -206,7 +209,7 @@ def sd_max_min(mean_list,sd_list,T):
         sd_min.append(mean_list[i]- sd_list[i])
     return sd_max,sd_min
     
-def plot_show(loop,T,PR,rdm):
+def plot_show(loop,T,PR,rdm,PRps):
     
     if(PR):
         PR_reward_data = []
@@ -216,14 +219,21 @@ def plot_show(loop,T,PR,rdm):
                 PR_reward_data.append(PR_reward)
     
     
-    
     if(rdm):
         rdm_reward_data = []
         for i in range(loop):
             with open('reward/rdm_reward'+str(i)+'.pickle', 'rb') as rdm_R_f:
                 rdm_reward = pickle.load(rdm_R_f)
                 rdm_reward_data.append(rdm_reward)
-            
+
+    if(PRps):
+        PR_reward_ps_data = []
+        for i in range(loop):
+            with open('reward/PR_reward'+str(i)+'per_step'+'.pickle', 'rb') as PR_R_f:
+                PR_reward_ps = pickle.load(PR_R_f)
+                PR_reward_ps_data.append(PR_reward_ps)
+    
+                
     if(PR):            
         PRmean_list,PRsd_list = sd_cal(PR_reward_data,loop,T)
         PRsd_max,PRsd_min = sd_max_min(PRmean_list,PRsd_list,T)
@@ -231,23 +241,35 @@ def plot_show(loop,T,PR,rdm):
     if(rdm):
         rdm_mean_list,rdm_sd_list = sd_cal(rdm_reward_data,loop,T)
         rdm_sd_max,rdm_sd_min = sd_max_min(rdm_mean_list,rdm_sd_list,T)
+        
+    if(PRps):
+        PRps_mean_list,PRpssd_list = sd_cal(PR_reward_ps_data,loop,T)
+        PRps_sd_max,PRps_sd_min = sd_max_min(PRps_mean_list,PRpssd_list,T)
     
     
-    step_list = list( range(T) )
+    Episode_list = list( range(T) )
     if(PR):
-        plt.plot(step_list ,PRmean_list ,label='PrioritizedReplay')
-        plt.fill_between(step_list,PRsd_max,PRsd_min,facecolor = "blue", alpha= 0.3)
+        plt.plot(Episode_list ,PRmean_list ,label='PrioritizedReplay')
+        plt.fill_between(Episode_list,PRsd_max,PRsd_min,facecolor = "blue", alpha= 0.3)
     
     if(rdm):
-        plt.plot(step_list ,rdm_mean_list ,label='Random')
-        plt.fill_between(step_list,rdm_sd_max,rdm_sd_min,facecolor = "red", alpha= 0.3)
+        plt.plot(Episode_list ,rdm_mean_list ,label='Random')
+        plt.fill_between(Episode_list,rdm_sd_max,rdm_sd_min,facecolor = "red", alpha= 0.3)
+    
+    if(PRps):
+        plt.plot(Episode_list ,PRps_mean_list ,label='PrioritizedReplay')
+        plt.fill_between(Episode_list,PRps_sd_max,PRps_sd_min,facecolor = "blue", alpha= 0.3)
+    
     
     plt.xlabel('Episode')
-    plt.ylabel('Total Reward')
+    
+    str_y = "Total Reward"
+    if(PRps):
+        str_y = "Reward per step"
+    plt.ylabel(str_y)
+    
     plt.legend(loc='lower right')
     plt.show()
-    
-    
     
     
 def save_reward_data(loop_num,PR_reward_list,rdm_reward_list,PR_reward_ps_list):
@@ -291,7 +313,7 @@ if __name__ == "__main__":
                 done = False
                 action = RL.act(cur_state)
                 new_state, reward, done, _ = RL.env.step(action)
-                #RL.env.render()  
+                RL.env.render()  
                 
                 pos = (new_state[0] + 1.2) / 0.9 - 1 
                 vel = abs(new_state[1]) / 0.035 -1 
@@ -320,7 +342,7 @@ if __name__ == "__main__":
                     PR_reward_ps_list.append(total_R/step)
                     step = 0
                     break
-        RL.env.close()
+    #    RL.env.close()
     #
     #    env_2     = gym.make("MountainCar-v0")
     #    env_2     = env_2.unwrapped
@@ -358,8 +380,8 @@ if __name__ == "__main__":
     #                step = 0
     #                break
     #    env_2.close()        
-    #    
+        
         save_reward_data(i,PR_reward_list,False,False)
         
-    plot_show(loop,T,True,False)
+    plot_show(loop,T,True,False,False)
    
