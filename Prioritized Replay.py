@@ -191,7 +191,7 @@ def sd_cal(reward_data,loop,T):
         mean = 0
         for file in range(loop):
             mean += reward_data[file][t]
-        mean = mean/file
+        mean = mean/loop
         mean_list.append(mean)
         
         sd = 0
@@ -345,7 +345,7 @@ if __name__ == "__main__":
                 
                 if done:
                     print("t:",t,"steps:",step,"total_R:",total_R)
-                    rdm_reward_list.append(total_R/step)
+                    rdm_reward_list.append(total_R)
                     step = 0
                     break
         env_2.close()        
