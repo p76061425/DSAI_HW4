@@ -12,7 +12,7 @@ import pickle
 
 class SumTree(object):
     data_pointer = 0
-
+    
     def __init__(self, capacity):
         self.capacity = capacity
         self.tree = np.zeros(2 * capacity - 1)
@@ -36,7 +36,7 @@ class SumTree(object):
     
     def get_leaf(self, v):
         parent_idx = 0
-        while True:  
+        while True:
             cl_idx = 2 * parent_idx + 1 
             cr_idx = cl_idx + 1
             if cl_idx >= len(self.tree):  
@@ -52,10 +52,9 @@ class SumTree(object):
         data_idx = leaf_idx - self.capacity + 1
         return leaf_idx, self.tree[leaf_idx], self.data[data_idx]
 
-    @property
-    #return root_P
     def total_p(self):
-        return self.tree[0]
+        P = self.tree[0]
+        return P
 
 class Memory(object): 
     epsilon = 0.01 
@@ -75,16 +74,16 @@ class Memory(object):
 
     def sample(self, n):
         b_idx, b_memory, ISWeights = np.empty((n,), dtype=np.int32), np.empty((n,7)), np.empty((n, 1))
-        pri_seg = self.tree.total_p / n
+        pri_seg = self.tree.total_p() / n
         self.beta = np.min([1., self.beta + self.beta_increment_per_sampling])
 
-        min_prob = np.min(self.tree.tree[-self.tree.capacity:]) / self.tree.total_p
+        min_prob = np.min(self.tree.tree[-self.tree.capacity:]) / self.tree.total_p()
         for i in range(n):
             a, b = pri_seg * i, pri_seg * (i + 1)
             v = np.random.uniform(a, b)
             idx, p, data = self.tree.get_leaf(v)
             
-            prob = p / self.tree.total_p
+            prob = p / self.tree.total_p()
             ISWeights[i, 0] = np.power(prob/min_prob, -self.beta)
             
             b_idx[i] = idx
@@ -100,11 +99,10 @@ class Memory(object):
             self.tree.update(ti, p)
 
 class Prioritized_Replay:
-
     def __init__(self, env, memory_size):
         self.env     = env
         self.memory  = Memory(memory_size)
-        self.batch_size = 64
+        self.batch_size = 32
         self.gamma = 0.85
         self.epsilon = 1.0
         self.epsilon_min = 0.01
@@ -113,7 +111,8 @@ class Prioritized_Replay:
         self.tau = .125
         self.model        = self.create_model()
         self.target_model = self.create_model()
- 
+
+        
     def create_model(self):
         model   = Sequential()
         state_shape  = self.env.observation_space.shape
@@ -122,8 +121,7 @@ class Prioritized_Replay:
         model.add(Dense(24, activation="relu"))
         model.add(Dense(self.env.action_space.n))
         model.compile(loss="mean_squared_error",
-            optimizer=Adam(lr=self.learning_rate))
- 
+            optimizer=Adam(lr=self.learning_rate)) 
         return model
         
     def act(self, state):
@@ -131,7 +129,6 @@ class Prioritized_Replay:
         self.epsilon = max(self.epsilon_min, self.epsilon)
         if np.random.random() < self.epsilon:
             return self.env.action_space.sample()
-        
         return np.argmax(self.model.predict(state)[0])
 
     def remember(self, cur_state0, cur_state1, action,reward, new_state0, new_state1, done):
@@ -199,7 +196,6 @@ def sd_cal(reward_data,loop,T):
             sd += np.square(reward_data[file][t] - mean)
         sd = np.sqrt(sd/10)
         sd_list.append(sd)
-
     return mean_list, sd_list
     
 def sd_max_min(mean_list,sd_list,T):
@@ -210,36 +206,49 @@ def sd_max_min(mean_list,sd_list,T):
         sd_min.append(mean_list[i]- sd_list[i])
     return sd_max,sd_min
     
-def plot_show(loop,T):
-    PR_reward_data = []
-    for i in range(loop):
-        with open('reward/PR_reward'+str(i)+'.pickle', 'rb') as PR_R_f:
-            PR_reward = pickle.load(PR_R_f)
-            PR_reward_data.append(PR_reward)
+def plot_show(loop,T,PR,rdm):
     
-    rdm_reward_data = []
-    for i in range(loop):
-        with open('reward/rdm_reward'+str(i)+'.pickle', 'rb') as rdm_R_f:
-            rdm_reward = pickle.load(rdm_R_f)
-            rdm_reward_data.append(rdm_reward)
+    if(PR):
+        PR_reward_data = []
+        for i in range(loop):
+            with open('reward/PR_reward'+str(i)+'.pickle', 'rb') as PR_R_f:
+                PR_reward = pickle.load(PR_R_f)
+                PR_reward_data.append(PR_reward)
+    
+    
+    
+    if(rdm):
+        rdm_reward_data = []
+        for i in range(loop):
+            with open('reward/rdm_reward'+str(i)+'.pickle', 'rb') as rdm_R_f:
+                rdm_reward = pickle.load(rdm_R_f)
+                rdm_reward_data.append(rdm_reward)
             
-    PRmean_list,PRsd_list = sd_cal(PR_reward_data,loop,T)
-    rdm_mean_list,rdm_sd_list = sd_cal(rdm_reward_data,loop,T)
+    if(PR):            
+        PRmean_list,PRsd_list = sd_cal(PR_reward_data,loop,T)
+        PRsd_max,PRsd_min = sd_max_min(PRmean_list,PRsd_list,T)
+        
+    if(rdm):
+        rdm_mean_list,rdm_sd_list = sd_cal(rdm_reward_data,loop,T)
+        rdm_sd_max,rdm_sd_min = sd_max_min(rdm_mean_list,rdm_sd_list,T)
     
-    PRsd_max,PRsd_min = sd_max_min(PRmean_list,PRsd_list,T)
-    rdm_sd_max,rdm_sd_min = sd_max_min(rdm_mean_list,rdm_sd_list,T)
-    
-    print(rdm_sd_max,rdm_sd_min )
     
     step_list = list( range(T) )
-    plt.plot(step_list ,PRmean_list ,label='PrioritizedReplay')
-    plt.plot(step_list ,rdm_mean_list ,label='Random')
-    plt.fill_between(step_list,PRsd_max,PRsd_min,facecolor = "blue", alpha= 0.3)
-    plt.fill_between(step_list,rdm_sd_max,rdm_sd_min,facecolor = "red", alpha= 0.3)
+    if(PR):
+        plt.plot(step_list ,PRmean_list ,label='PrioritizedReplay')
+        plt.fill_between(step_list,PRsd_max,PRsd_min,facecolor = "blue", alpha= 0.3)
+    
+    if(rdm):
+        plt.plot(step_list ,rdm_mean_list ,label='Random')
+        plt.fill_between(step_list,rdm_sd_max,rdm_sd_min,facecolor = "red", alpha= 0.3)
+    
     plt.xlabel('Episode')
     plt.ylabel('Total Reward')
     plt.legend(loc='lower right')
     plt.show()
+    
+    
+    
     
 def save_reward_data(loop_num,PR_reward_list,rdm_reward_list,PR_reward_ps_list):
     path = "reward/"
@@ -260,9 +269,10 @@ def save_reward_data(loop_num,PR_reward_list,rdm_reward_list,PR_reward_ps_list):
 
 if __name__ == "__main__":
     
+    T = 100
     loop = 10
     for i in range(loop):
-    
+        print("loop:",i)
         MEMORY_SIZE = 4000
         env     = gym.make("MountainCar-v0")
         env     = env.unwrapped
@@ -278,11 +288,10 @@ if __name__ == "__main__":
             step = 0
             total_R = 0
             while(True):
-                env.render()  
                 done = False
                 action = RL.act(cur_state)
                 new_state, reward, done, _ = RL.env.step(action)
-                RL.env.render()  
+                #RL.env.render()  
                 
                 pos = (new_state[0] + 1.2) / 0.9 - 1 
                 vel = abs(new_state[1]) / 0.035 -1 
@@ -311,46 +320,46 @@ if __name__ == "__main__":
                     PR_reward_ps_list.append(total_R/step)
                     step = 0
                     break
-        env.close()
-    
-        env_2     = gym.make("MountainCar-v0")
-        env_2     = env_2.unwrapped
-        total_steps = 0
-        rdm_reward_list = []
-        for t in range(T):
-            cur_state = env_2.reset().reshape(1,2)
-            step = 0
-            total_R = 0
-            while(True):
-                env_2.render()  
-                done = False
-                action = env_2.action_space.sample()             
-                new_state, reward, done, _ = env_2.step(action)       
-                env_2.render()    
-                 
-                pos = (new_state[0] + 1.2) / 0.9 - 1 
-                vel = abs(new_state[1]) / 0.035 -1 
-                
-                reward = pos + vel
-                if done:
-                    reward = 1
-                
-                total_R += reward
-                cur_state = new_state
-                total_steps += 1
-                step += 1 
-                
-                if (step == learning_step):
-                    done = 1
-                
-                if done:
-                    print("t:",t,"steps:",step,"total_R:",total_R)
-                    rdm_reward_list.append(total_R)
-                    step = 0
-                    break
-        env_2.close()        
+        RL.env.close()
+    #
+    #    env_2     = gym.make("MountainCar-v0")
+    #    env_2     = env_2.unwrapped
+    #    total_steps = 0
+    #    rdm_reward_list = []
+    #    for t in range(T):
+    #        cur_state = env_2.reset().reshape(1,2)
+    #        step = 0
+    #        total_R = 0
+    #        while(True):
+    #            env_2.render()  
+    #            done = False
+    #            action = env_2.action_space.sample()             
+    #            new_state, reward, done, _ = env_2.step(action)       
+    #            env_2.render()    
+    #             
+    #            pos = (new_state[0] + 1.2) / 0.9 - 1 
+    #            vel = abs(new_state[1]) / 0.035 -1 
+    #            
+    #            reward = pos + vel
+    #            if done:
+    #                reward = 1
+    #            
+    #            total_R += reward
+    #            cur_state = new_state
+    #            total_steps += 1
+    #            step += 1 
+    #            
+    #            if (step == learning_step):
+    #                done = 1
+    #            
+    #            if done:
+    #                print("t:",t,"steps:",step,"total_R:",total_R)
+    #                rdm_reward_list.append(total_R/step)
+    #                step = 0
+    #                break
+    #    env_2.close()        
+    #    
+        save_reward_data(i,PR_reward_list,False,False)
         
-        save_reward_data(i,PR_reward_list,rdm_reward_list,False)
-        
-    plot_show(loop,T)
+    plot_show(loop,T,True,False)
    
