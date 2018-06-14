@@ -177,8 +177,8 @@ class Prioritized_Replay:
         self.target_model.set_weights(target_weights)
  
     def start(self,cur_state0, cur_state1, action,reward, new_state0, new_state1, done):
-        self.remember(cur_state0, cur_state1, action,reward, new_state0, new_state1, done)
-        tree_idx, batch_memory, ISWeights = self.memory.sample(self.batch_size)
+        #self.remember(cur_state0, cur_state1, action,reward, new_state0, new_state1, done)
+        #tree_idx, batch_memory, ISWeights = self.memory.sample(self.batch_size)
         self.replay()        
         self.target_train() 
 
@@ -313,7 +313,7 @@ if __name__ == "__main__":
                 done = False
                 action = RL.act(cur_state)
                 new_state, reward, done, _ = RL.env.step(action)
-                RL.env.render()  
+                #RL.env.render()  
                 
                 pos = (new_state[0] + 1.2) / 0.9 - 1 
                 vel = abs(new_state[1]) / 0.035 -1 
