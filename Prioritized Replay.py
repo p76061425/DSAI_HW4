@@ -130,6 +130,7 @@ class Prioritized_Replay:
         
         model = Model([inputs, weights], l3)
         model.compile(loss=weight_loss_wrapper(weights),optimizer=Adam(lr=self.learning_rate)) 
+        model.summary()
 
         return model
         
@@ -143,17 +144,43 @@ class Prioritized_Replay:
     def remember(self, cur_state0, cur_state1, action,reward, new_state0, new_state1, done):
         self.memory.store([cur_state0, cur_state1, action,reward, new_state0, new_state1, done])
  
+#    def replay(self):
+#        tree_idx, batch_memory, ISWeights = self.memory.sample(self.batch_size)
+#        state = batch_memory[:,:2]
+#        new_state = batch_memory[:,4:6]
+#        
+#        pridict_Q = self.model.predict(   [new_state,np.ones((self.batch_size, 1))]   )
+#        max_act = np.empty((self.batch_size))
+#        for i in range(self.batch_size):
+#            max_act[i] = np.argmax(pridict_Q[i,:])
+#        
+#        train_targets = self.target_model.predict( [state,np.ones((self.batch_size, 1))] )
+#        Q_future = self.target_model.predict( [new_state,np.ones((self.batch_size, 1))]  )
+#        targets = np.zeros((self.batch_size))
+#        abs_errors = np.zeros((self.batch_size))
+#        
+#        for idx,sample_q in enumerate(Q_future):
+#            reward = batch_memory[idx,3]
+#            action = batch_memory[idx,2]
+#            max_idx = int(max_act[idx])
+#            max_Q_future = sample_q[max_idx]
+#            targets[idx] = reward + self.gamma*max_Q_future
+#            train_targets[idx,int(action)] = reward + self.gamma*max_Q_future
+#        
+#        self.model.fit( [state,ISWeights]  , train_targets, epochs=1, verbose=0)
+
+
     def replay(self):
         tree_idx, batch_memory, ISWeights = self.memory.sample(self.batch_size)
         state = batch_memory[:,:2]
         new_state = batch_memory[:,4:6]
         
-        pridict_Q = self.model.predict(   [new_state,np.ones((self.batch_size, 1))]   )
+        pridict_max_idx = self.model.predict(   [new_state,np.ones((self.batch_size, 1))]   )
         max_act = np.empty((self.batch_size))
         for i in range(self.batch_size):
-            max_act[i] = np.argmax(pridict_Q[i,:])
+            max_act[i] = np.argmax(pridict_max_idx[i,:])
         
-        train_targets = self.target_model.predict( [state,np.ones((self.batch_size, 1))] )
+        train_targets = self.model.predict( [state,np.ones((self.batch_size, 1))] )
         Q_future = self.target_model.predict( [new_state,np.ones((self.batch_size, 1))]  )
         targets = np.zeros((self.batch_size))
         abs_errors = np.zeros((self.batch_size))
@@ -164,11 +191,13 @@ class Prioritized_Replay:
             max_idx = int(max_act[idx])
             max_Q_future = sample_q[max_idx]
             targets[idx] = reward + self.gamma*max_Q_future
+            abs_errors[idx] = abs(targets[idx] - train_targets[idx,int(action)])
             train_targets[idx,int(action)] = reward + self.gamma*max_Q_future
         
         self.model.fit( [state,ISWeights]  , train_targets, epochs=1, verbose=0)
-        
-    
+        self.memory.batch_update(tree_idx,abs_errors)
+
+
     def target_train(self):
         weights = self.model.get_weights()
         target_weights = self.target_model.get_weights()
@@ -177,8 +206,8 @@ class Prioritized_Replay:
         self.target_model.set_weights(target_weights)
  
     def start(self,cur_state0, cur_state1, action,reward, new_state0, new_state1, done):
-        #self.remember(cur_state0, cur_state1, action,reward, new_state0, new_state1, done)
-        #tree_idx, batch_memory, ISWeights = self.memory.sample(self.batch_size)
+        self.remember(cur_state0, cur_state1, action,reward, new_state0, new_state1, done)
+        tree_idx, batch_memory, ISWeights = self.memory.sample(self.batch_size)
         self.replay()        
         self.target_train() 
 
@@ -313,7 +342,7 @@ if __name__ == "__main__":
                 done = False
                 action = RL.act(cur_state)
                 new_state, reward, done, _ = RL.env.step(action)
-                #RL.env.render()  
+                RL.env.render()  
                 
                 pos = (new_state[0] + 1.2) / 0.9 - 1 
                 vel = abs(new_state[1]) / 0.035 -1 
@@ -380,7 +409,7 @@ if __name__ == "__main__":
     #                step = 0
     #                break
     #    env_2.close()        
-        
+    #    
         save_reward_data(i,PR_reward_list,False,False)
         
     plot_show(loop,T,True,False,False)
